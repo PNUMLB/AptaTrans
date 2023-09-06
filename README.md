@@ -16,10 +16,8 @@ AptaTrans pipeline is a robust framework designed for the prediction and recomme
 Here's a step-by-step guide on how to run the AptaTransPipeline:
 
 Before you dive into the AptaTrans Pipeline, make sure to fetch the essential database files from our Google Drive:
-1. **bpRNA.db**  
-   [![Download bpRNA.db](https://img.shields.io/badge/Download-bpRNA.db-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/178f_Tb3kgK4sZ23QAhqiK5YOUtkxjyMl/view?usp=sharing)
-2. **protein_ss_keywords.db**  
-   [![Download protein_ss_keywords.db](https://img.shields.io/badge/Download-protein_ss_keywords.db-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=sharing)
+1. [![Download bpRNA.db]([https://img.shields.io/badge/Download-bpRNA.db-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/178f_Tb3kgK4sZ23QAhqiK5YOUtkxjyMl/view?usp=sharing](https://drive.google.com/file/d/178f_Tb3kgK4sZ23QAhqiK5YOUtkxjyMl/view?usp=drive_link))
+2. [![Download protein_ss_keywords.db](https://img.shields.io/badge/Download-protein_ss_keywords.db-blue?style=for-the-badge&logo=google-drive)]([https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=sharing](https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=drive_link))
 
 ### 1. Initialize the Pipeline
 
