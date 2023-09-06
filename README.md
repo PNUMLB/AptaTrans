@@ -1,6 +1,6 @@
 # AptaTrans Pipeline
 
-AptaTrans pipeline is a robust framework designed for the prediction and recommendation of Aptamer-Protein Interactions (API).
+The **AptaTrans Pipeline** is a specialized computational tool designed for accurately predicting Aptamer-Protein Interactions (API) and recommending optimal (candidate) aptamer sequences for specific protein targets.
 
 ## Overview
 - **Pre-training**: The pipeline pretrained AptaTrans's two encoders - one for aptamer ($encoder_{apta}$) and another for protein ($encoder_{prot}$). Pretraining tasks involve predicting masked tokens and secondary structures.
