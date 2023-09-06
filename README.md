@@ -1,6 +1,6 @@
 # AptaTrans Pipeline
 
-AptaTrans pipeline is a robust framework designed for the prediction and recommendation of Aptamer-Protein Interactions (API). Using self-supervised learning techniques, AptaTransPipeline effectively preprocesses, trains, and provides inference capabilities for aptamer and protein interactions.
+AptaTrans pipeline is a robust framework designed for the prediction and recommendation of Aptamer-Protein Interactions (API).
 
 ## Overview
 - **Pre-training**: The pipeline pretrained AptaTrans's two encoders - one for aptamer ($encoder_{apta}$) and another for protein ($encoder_{prot}$). Pretraining tasks involve predicting masked tokens and secondary structures.
@@ -31,14 +31,14 @@ pipeline = AptaTransPipeline(
 ```
 
 2. Pretrain the Aptamer Encoder
-- Using the bpRNA dataset:
+- Using the bpRNA dataset (accessible from the provided Google Drive link)
 ```python
 pipeline.set_data_rna_pt(batch_size=68) # dataset from bpRNA
 pipeline.pretrain_aptamer(epochs=1000, lr=1e-5)
 ```
 
 3. Pretrain the Protein Encoder
-- Using the PDB dataset:
+- Using the PDB dataset (accessible from the provided Google Drive link)
 ```python
 pipeline.set_data_protein_pt(batch_size=68) # dataset from PDB
 pipeline.pretrain_protein(epochs=1000, lr=1e-5)
@@ -51,7 +51,7 @@ pipeline.train(epochs=200, lr=1e-5)
 ```
 
 5. Predict API Scores
-- For given aptamer and target protein sequences:
+- For given aptamer and target protein sequences
 ```python
 # aptamer sequence
 aptamer = 'AACGCCGCGCGUUUAACUUCC'
