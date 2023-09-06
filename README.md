@@ -12,13 +12,12 @@ AptaTrans pipeline is a robust framework designed for the prediction and recomme
 - **Apta-MCTS Recommendation**: For any given target protein sequence, the pipeline can recommend candidate aptamer sequences via Apta-MCTS.
 
 ## Requirements
-- pickle5
-- torch
-- tqdm
-- numpy
-- scikit-learn
-- pandas
+- torch==2.0.1
+- tqdm==4.62.1
+- numpy==1.24.3
+- scikit-learn==1.2.2
 - sqlite3
+- pickle
 
 ## Getting Started
 
