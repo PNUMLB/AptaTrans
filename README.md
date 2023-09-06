@@ -3,7 +3,7 @@
 AptaTrans pipeline is a robust framework designed for the prediction and recommendation of Aptamer-Protein Interactions (API). Using self-supervised learning techniques, AptaTransPipeline effectively preprocesses, trains, and provides inference capabilities for aptamer and protein interactions.
 
 ## Overview
-- **Pretraining**: The pipeline pretrained AptaTrans's two encoders - one for aptamer (`$encoder_{apta}$`) and another for protein (`$encoder_{prot}$`). Pretraining tasks involve predicting masked tokens and secondary structures.
+- **Pre-training**: The pipeline pretrained AptaTrans's two encoders - one for aptamer ($encoder_{apta}$) and another for protein ($encoder_{prot}$). Pretraining tasks involve predicting masked tokens and secondary structures.
   
 - **Fine-tuning**: After pretraining, AptaTrans is then fine-tuned for better performance.
 
