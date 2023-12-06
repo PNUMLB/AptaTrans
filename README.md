@@ -27,7 +27,7 @@ Before you dive into the AptaTrans Pipeline, make sure to fetch the essential da
 - **bpRNA.db**
 [![Download bpRNA.db](https://img.shields.io/badge/Download-protein_ss_keywords.db-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/178f_Tb3kgK4sZ23QAhqiK5YOUtkxjyMl/view?usp=sharing](https://drive.google.com/file/d/178f_Tb3kgK4sZ23QAhqiK5YOUtkxjyMl/view?usp=drive_link))
 - **protein_ss_keywords.db**
-[![Download protein_ss_keywords.db](https://img.shields.io/badge/Download-protein_ss_keywords.db-blue?style=for-the-badge&logo=google-drive)]([https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=sharing](https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=drive_link))
+[![Download protein_ss_keywords.db](https://img.shields.io/badge/Download-protein_ss_keywords.db-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=sharing](https://drive.google.com/file/d/1E1TIVtppA1L6nu0f8pYQKBAz2ZyBSCMY/view?usp=sharing))
 
 ### 1. Initialize the Pipeline
 
