@@ -33,12 +33,12 @@ Before you dive into the AptaTrans Pipeline, make sure to fetch the essential da
 
 ```python
 pipeline = AptaTransPipeline(
-    d_model=128,
-    d_ff=512,
+    dim=128,
+    mult_ff=2,
     n_layers=6,
     n_heads=8,
     dropout=0.1,
-    load_best_pt=True,
+    load_best_pt=False,
     device='cuda',
     seed=1004,
 )
@@ -47,15 +47,15 @@ pipeline = AptaTransPipeline(
 2. Pretrain the Aptamer Encoder
 - Using the bpRNA dataset (accessible from the provided Google Drive link)
 ```python
-pipeline.set_data_rna_pt(batch_size=68) # dataset from bpRNA
-pipeline.pretrain_aptamer(epochs=1000, lr=1e-5)
+pipeline.set_data_rna_pt(batch_size=32) # dataset from bpRNA
+pipeline.pretrain_encoder_aptamer(epochs=1000, lr=1e-5)
 ```
 
 3. Pretrain the Protein Encoder
 - Using the PDB dataset (accessible from the provided Google Drive link)
 ```python
-pipeline.set_data_protein_pt(batch_size=68) # dataset from PDB
-pipeline.pretrain_protein(epochs=1000, lr=1e-5)
+pipeline.set_data_protein_pt(batch_size=32) # dataset from PDB
+pipeline.pretrain_encoder_protein(epochs=1000, lr=1e-5)
 ```
 
 4. Fine-tune AptaTrans for API Prediction
