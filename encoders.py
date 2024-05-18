@@ -1,331 +1,286 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange, einsum
 import math
 import numpy as np
-    
-class Encoder(nn.Module):
-    def __init__(self, d_ff=512, d_model=128, n_heads=8, dropout=.3, max_len=512):
-        super(Encoder, self).__init__()
-        #hyperparameters
-        self.d_ff = d_ff
-        self.d_model= d_model
-        self.n_heads = n_heads
-        self.dropout_rate = dropout
-        self.max_len = max_len
+from sklearn.metrics import f1_score
 
-        #layers
-        self.MultiHeadAttention = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, batch_first=True)
-        self.LayerNorm = nn.LayerNorm(normalized_shape=[max_len, d_model], eps=1e-6)
-        self.fc_ff = nn.Linear(d_model, d_ff)
-        self.relu = nn.ReLU()
-        self.fc_model = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(p=dropout)
-        
-    def forward(self, x, padding_mask):
-        residual = x
-        x = self.MultiHeadAttention(x,x,x, key_padding_mask=padding_mask, need_weights=False)[0]
-        
-        x = self.dropout(x)
-        x = self.LayerNorm(x + residual)
-        
-        residual = x
-        x = self.fc_ff(x)
-        x = self.relu(x)
-        x = self.fc_model(x)
-        x = self.dropout(x)
-        x = self.LayerNorm(x + residual)
-        
-        return x
-    
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, max_len: int = 5000):
+class GEGLU(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x, gates = x.chunk(2, dim=-1)
+        return x * F.gelu(gates)
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, mult=4, dropout=0.):
         super().__init__()
-        #hyperparameters
+        dim_hidden = int(dim * mult)
+        self.net = nn.Sequential(
+            nn.Linear(dim, dim_hidden * 2),
+            GEGLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_hidden, dim)
+        )
 
+    def forward(self, x, **kwargs):
+        return self.net(x)
+
+class SelfAttention(nn.Module):
+    def __init__(
+        self,
+        dim,
+        n_heads=8,
+        dim_attn=16,
+        dropout=0.,
+    ):
+        super().__init__()
+
+        dim_inner = dim_attn * n_heads
+        self.n_heads = n_heads
+
+        self.scale = dim_attn ** -0.5
+
+        self.to_q = nn.Linear(dim, dim_inner, bias=False)
+        self.to_k = nn.Linear(dim, dim_inner, bias=False)
+        self.to_v = nn.Linear(dim, dim_inner, bias=False)
+
+        self.to_out = nn.Linear(dim_inner, dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.n_heads
+        q = self.to_q(x)
+        k = self.to_k(x)
+        v = self.to_v(x)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
+        sim = torch.einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+        attn = sim.softmax(dim=-1)
+        out = torch.einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = rearrange(out, 'b h n d -> b n (h d)', h=h)
+        return self.dropout(self.to_out(out))
+
+class Encoder(nn.Module):
+    def __init__(self, dim, n_heads, dim_attn, mult_ff, dropout_ff, dropout_attn):
+        super().__init__()
+        self.norm_attn = nn.LayerNorm(dim)
+        self.attention = SelfAttention(dim, n_heads, dim_attn, dropout_attn)
+        self.norm_ff = nn.LayerNorm(dim)
+        self.ff = FeedForward(dim, mult_ff, dropout_ff)
+
+    def forward(self, x):
+        out_attn = self.attention(x)
+        x = self.norm_attn(out_attn + x)
+        out_ff = self.ff(x)
+        x = self.norm_ff(out_ff + x)
+        return x
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, dim: int, max_len: int = 5000):
+        super().__init__()
         position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
+        div_term = torch.exp(torch.arange(0, dim, 2) * (-math.log(10000.0) / dim))
+        pe = torch.zeros(max_len, 1, dim)
         pe[:, 0, 0::2] = torch.sin(position * div_term)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
         self.register_buffer('pe', pe)
 
     def forward(self, x: torch.Tensor):
-        x = x + self.pe[:x.size(0)]
-        
-        return x
-
-        
+        return x + self.pe[:x.size(0)]
 
 class Encoders(nn.Module):
-    def __init__(self, n_vocabs, n_layers=6, d_ff=512, d_model=128, n_heads=8, dropout=.3, max_len=512):
+    def __init__(self, n_vocabs, dim=128, n_layers=6, mult_ff=2, n_heads=8, dropout=0.3, max_len=512):
         super(Encoders, self).__init__()
-        #hyperparameters
         self.n_vocabs = n_vocabs
         self.n_layers = n_layers
-        self.d_ff = d_ff
-        self.d_model= d_model
-        self.n_heads = n_heads
-        self.dropout_rate = dropout
-        self.max_len = max_len
-        
-        #layers
-        self.Embedding = nn.Embedding(num_embeddings=n_vocabs, embedding_dim=d_model, padding_idx=0)
-        self.PositionalEncoding = PositionalEncoding(d_model, max_len=max_len)
-        self.encoders = nn.ModuleList([Encoder(d_ff=d_ff, d_model=d_model, n_heads=n_heads, dropout=dropout, max_len=max_len) for _ in range(n_layers)])
-    
+        self.dim = dim
+        self.Embedding = nn.Embedding(num_embeddings=n_vocabs, embedding_dim=dim, padding_idx=0)
+        self.PositionalEncoding = PositionalEncoding(dim, max_len=max_len)
+        self.encoders = nn.ModuleList([
+            Encoder(dim=dim, n_heads=n_heads, dim_attn=dim // n_heads, mult_ff=mult_ff, dropout_ff=dropout, dropout_attn=dropout)
+            for _ in range(n_layers)
+        ])
+
     def forward(self, x):
         padding_mask = self.create_padding_mask(x)
         x = self.Embedding(x)
-        
         x = self.PositionalEncoding(x)
-        x[padding_mask] = torch.zeros(self.d_model).to(x.device)
-        
-        for i in range(self.n_layers):
-            x = self.encoders[i](x, padding_mask)
-
-        x[padding_mask] = torch.zeros(self.d_model).to(x.device)
-
+        x[padding_mask] = torch.zeros(self.dim).to(x.device)
+        for encoder in self.encoders:
+            x = encoder(x)
+        x[padding_mask] = torch.zeros(self.dim).to(x.device)    
         return x
-    
-    def create_padding_mask(self, x):
-        mask = torch.eq(x, torch.zeros(x.size(), device=x.device))
-        
-        return mask
-        
 
-class Token_Pretrained_Model(nn.Module):
-    def __init__(self, n_vocabs, n_target_vocabs, d_ff, d_model, n_layers, n_heads, dropout, max_len):
-        super(Token_Pretrained_Model, self).__init__()
-        self.encoder = Encoders(n_vocabs=n_vocabs, d_ff=d_ff, d_model=d_model, n_layers=n_layers, n_heads=n_heads, dropout=dropout, max_len=max_len)
-        
-        self.fc1_mlm = nn.Linear(d_model, d_model)
-        self.gelu_mlm = nn.GELU()
-        self.norm_mlm = nn.LayerNorm(normalized_shape=[max_len, d_model], eps=1e-6)
-        self.fc2_mlm = nn.Linear(d_model, n_vocabs)
-        
-        self.fc1_ssp = nn.Linear(d_model, d_model)
-        self.gelu_ssp = nn.GELU()
-        self.norm_ssp = nn.LayerNorm(normalized_shape=[max_len, d_model], eps=1e-6)
-        self.fc2_ssp = nn.Linear(d_model, n_target_vocabs)
-        
-    def forward(self, inputs_mlm, inputs_ssp):
-        enc_mlm = self.encoder(inputs_mlm)
-        output_mlm = self.fc1_mlm(enc_mlm)
-        output_mlm = self.gelu_mlm(output_mlm)
-        output_mlm = self.norm_mlm(output_mlm)
-        output_mlm = self.fc2_mlm(output_mlm)
-        output_mlm = F.log_softmax(output_mlm, dim=1)
-        
-        enc_ssp = self.encoder(inputs_ssp)
-        output_ssp = self.fc1_ssp(enc_ssp)
-        output_ssp = self.gelu_ssp(output_ssp)
-        output_ssp = self.norm_ssp(output_ssp)
-        output_ssp = self.fc2_ssp(output_ssp)
-        output_ssp = F.log_softmax(output_ssp, dim=1)
-        
+    def create_padding_mask(self, x):
+        return x == 0
+
+class Token_Predictor(nn.Module):
+    def __init__(self, n_vocabs, n_target_vocabs, dim):
+        super(Token_Predictor, self).__init__()
+        self.fc1_mlm = nn.Linear(dim, n_vocabs)
+        self.fc1_ssp = nn.Linear(dim, n_target_vocabs)
+
+    def forward(self, x_mlm, x_ssp):
+        output_mlm = self.fc1_mlm(x_mlm)
+        output_ssp = self.fc1_ssp(x_ssp)
         return output_mlm, output_ssp
 
+class To_IteractionMap(nn.Module):
+    def __init__(self):
+        super(To_IteractionMap, self).__init__()
+        self.batchnorm = nn.BatchNorm2d(1)
+
+    def forward(self, apta, prot):
+        prot = torch.transpose(prot, 1, 2)
+        interaction_map = torch.bmm(apta, prot)
+        out = torch.unsqueeze(interaction_map, 1)
+        out = self.batchnorm(out)
+        return out
+
+class Predictor(nn.Module):
+    def __init__(self, channel_size=64):
+        super(Predictor, self).__init__()
+        self.predictor = nn.Sequential(
+            nn.Linear(channel_size*4, channel_size),
+            nn.GELU(),
+            nn.Linear(channel_size, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        out = self.predictor(x)
+        return out
+    
 class Convolution_Block(nn.Module):
-    def __init__(self, kernel_size):
+    def __init__(self, channels):
         super(Convolution_Block, self).__init__()
-        
-        self.conv1 = nn.Conv2d(kernel_size, kernel_size, (3, 3), padding='same')
-        self.batchnorm1 = nn.BatchNorm2d(kernel_size)
-        
-        self.conv2 = nn.Conv2d(kernel_size, kernel_size, (3, 3), padding='same')
-        self.batchnorm2 = nn.BatchNorm2d(kernel_size)
-                                 
+        self.conv1 = nn.Conv2d(channels, channels, (3, 3), padding='same')
+        self.batchnorm1 = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(channels, channels, (3, 3), padding='same')
+        self.batchnorm2 = nn.BatchNorm2d(channels)
         self.gelu = nn.GELU()
-        
-    def forward(self, inputs):
-        output = self.conv1(inputs)
-        output = self.batchnorm1(output)
-        output = self.gelu(output)
 
-        output = self.conv2(output)
-        output = self.batchnorm2(output)
-        output = self.gelu(output)
-
-        output = output + inputs
-        
-        return output
-        
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.batchnorm1(out)
+        out = self.gelu(out)
+        out = self.conv2(out)
+        out = self.batchnorm2(out)
+        out = self.gelu(out)
+        out = out + x
+        return out
 
 class Downsized_Convolution_Block(nn.Module):
-    def __init__(self, input_kernel_size, output_kernel_size):
+    def __init__(self, input_channels, output_channels):
         super(Downsized_Convolution_Block, self).__init__()
-        
-        self.conv1 = nn.Conv2d(input_kernel_size, output_kernel_size, (3, 3), padding='same')
-        self.batchnorm1 = nn.BatchNorm2d(output_kernel_size)
-        
-        self.conv2 = nn.Conv2d(output_kernel_size, output_kernel_size, (3, 3), padding='same')
-        self.batchnorm2 = nn.BatchNorm2d(output_kernel_size)
-        
-        self.maxpool = nn. MaxPool2d((2, 2))
+        self.conv1 = nn.Conv2d(input_channels, output_channels, (3, 3), padding='same')
+        self.batchnorm1 = nn.BatchNorm2d(output_channels)
+        self.conv2 = nn.Conv2d(output_channels, output_channels, (3, 3), padding='same')
+        self.batchnorm2 = nn.BatchNorm2d(output_channels)
+        self.maxpool = nn.MaxPool2d((2, 2))
         self.gelu = nn.GELU()
-        
-    def forward(self, inputs):
-        output = self.maxpool(inputs)
-        
-        output = self.conv1(output)
-        output = self.batchnorm1(output)
-        output = self.gelu(output)
-        
-        output = self.conv2(output)
-        output = self.batchnorm2(output)
-        output = self.gelu(output)
-        
-        return output
-        
-class AptaTrans(nn.Module):
-    def __init__(self, apta_encoder, prot_encoder, n_apta_vocabs, n_prot_vocabs, dropout, apta_max_len, prot_max_len):
-        super(AptaTrans, self).__init__()
-        
-        #hyperparameters
-        self.n_apta_vocabs = n_apta_vocabs
-        self.n_prot_vocabs = n_prot_vocabs
-        self.apta_max_len = apta_max_len
-        self.prot_max_len = prot_max_len
-        self.dropout = dropout
-        
-        self.apta_encoder = apta_encoder
-        self.prot_encoder = prot_encoder
-        
-        self.kernel_size = 64
-        
-        self.batchnorm_fm = nn.BatchNorm2d(1)
 
-        self.conv = nn.Conv2d(1, self.kernel_size, (3, 3))
-        self.batchnorm = nn.BatchNorm2d(self.kernel_size)
+    def forward(self, x):
+        out = self.maxpool(x)
+        out = self.conv1(out)
+        out = self.batchnorm1(out)
+        out = self.gelu(out)
+        out = self.conv2(out)
+        out = self.batchnorm2(out)
+        out = self.gelu(out)
+        return out
+
+class CONVBlocks(nn.Module):
+    def __init__(self, out_channels=64):
+        super(CONVBlocks, self).__init__()
+        self.out_channels = out_channels
+        self.conv = nn.Conv2d(1, self.out_channels, (3, 3))
+                
+        self.batchnorm = nn.BatchNorm2d(self.out_channels)
         self.gelu = nn.GELU()
-        
-        self.maxpool = nn.MaxPool2d((2,2))
-        
-        self.conv64_1 = Convolution_Block(64)
-        self.conv64_2 = Convolution_Block(64)
-        self.conv64_3 = Convolution_Block(64)
-        
-        self.dconv128 = Downsized_Convolution_Block(64, 128)
-        self.conv128_1 = Convolution_Block(128)
-        self.conv128_2 = Convolution_Block(128)
-
-        self.dconv256 = Downsized_Convolution_Block(128, 256)
-        self.conv256_1 = Convolution_Block(256)
-        self.conv256_2 = Convolution_Block(256)
-
-        self.avgpool = nn.AdaptiveAvgPool2d((1,1))
-        
+        self.conv64 = nn.Sequential(
+            Convolution_Block(self.out_channels),
+            Convolution_Block(self.out_channels),
+            Convolution_Block(self.out_channels)
+        )
+        self.dconv128 = Downsized_Convolution_Block(self.out_channels, self.out_channels * 2)
+        self.conv128 = nn.Sequential(
+            Convolution_Block(self.out_channels * 2),
+            Convolution_Block(self.out_channels * 2)
+        )
+        self.dconv256 = Downsized_Convolution_Block(self.out_channels * 2, self.out_channels * 4)
+        self.conv256 = nn.Sequential(
+            Convolution_Block(self.out_channels * 4),
+            Convolution_Block(self.out_channels * 4)
+        )
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(256 * 34 * 108, 128) #128, 136, 432 #68 * 216 * 256 # 256 * 34 * 108 #256, 68, 255
-    
-        self.fc1 = nn.Linear(128, 1)
-        
-    def forward(self, apta, prot):
-        apta = self.apta_encoder(apta)
-        
-        prot = self.prot_encoder(prot)
-        prot = torch.transpose(prot, 1, 2)
-    
-        output = torch.bmm(apta, prot)
-        output = torch.unsqueeze(output, 1)
-        output = self.batchnorm_fm(output)
-        
+    def forward(self, x):
+        output = torch.squeeze(x, dim=2)  # Remove the extra dimension
         output = self.conv(output)
         output = self.batchnorm(output)
         output = self.gelu(output)
-
-        output = self.conv64_1(output)
-        output = self.conv64_2(output)
-        output = self.conv64_3(output)
-
+        output = self.conv64(output)
         output = self.dconv128(output)
-        output = self.conv128_1(output)
-        output = self.conv128_2(output)
-
+        output = self.conv128(output)
         output = self.dconv256(output)
-        output = self.conv256_1(output)
-        output = self.conv256_2(output)
-
-        output = self.maxpool(output)
-       # print(output.shape)
+        output = self.conv256(output)
+        output = self.avgpool(output)
         output = self.flatten(output)
-                                 
-        output = self.fc(output)
-        output = self.gelu(output)
-        output = self.fc1(output)
-        
-        output = torch.sigmoid(output)
-        
         return output
-    
+
+class AptaTransWrapper(nn.Module):
+    def __init__(self, encoder_apta, encoder_prot, to_interaction_map, convblocks, predictor):
+        super(AptaTransWrapper, self).__init__()
+        self.encoder_apta = encoder_apta
+        self.encoder_prot = encoder_prot
+        self.to_interaction_map = to_interaction_map
+        self.convblocks = convblocks
+        self.predictor = predictor
+
+    def forward(self, apta, prot):
+        out_apta = self.encoder_apta(apta)
+        out_prot = self.encoder_prot(prot)
+        interaction_map = self.to_interaction_map(out_apta, out_prot)
+        out = self.convblocks(interaction_map)
+        out = self.predictor(out)
+        return out
+
     def generate_interaction_map(self, apta, prot):
         with torch.no_grad():
-            apta = self.apta_encoder(apta)
-            prot = self.prot_encoder(prot)
-            prot = torch.transpose(prot, 1, 2)
-
-            interaction_map = torch.bmm(apta, prot)
-
+            out_apta = self.encoder_apta(apta)
+            out_prot = self.encoder_prot(prot)
+            out_prot = torch.transpose(out_prot, 1, 2)
+            interaction_map = torch.bmm(out_apta, out_prot)
             interaction_map = torch.unsqueeze(interaction_map, 1)
             interaction_map = self.batchnorm_fm(interaction_map)
-
         return interaction_map
 
     def conv_block_proba(self, interaction_map):
         with torch.no_grad():
-            output = torch.tensor(interaction_map).float().to('cuda:0')
-            output = torch.unsqueeze(output, 1)
+            out = torch.tensor(interaction_map).float().to('cuda:0')
+            output = torch.unsqueeze(out, 1)
             output = torch.mean(output, 4)
-
-            output = self.conv(output)
-            output = self.batchnorm(output)
-            output = self.gelu(output)
-
-            output = self.conv64_1(output)
-            output = self.conv64_2(output)
-            output = self.conv64_3(output)
-
-            output = self.dconv128(output)
-            output = self.conv128_1(output)
-            output = self.conv128_2(output)
-
-            output = self.dconv256(output)
-            output = self.conv256_1(output)
-            output = self.conv256_2(output)
-
-            output = self.maxpool(output)
-            output = self.flatten(output)
-                                    
-            output = self.fc(output)
-            output = self.gelu(output)
-            output = self.fc1(output)
-            
-            output = torch.sigmoid(output)
-            output = np.array([[1 - o[0], o[0]]for o in output.clone().detach().cpu().numpy()])
-            
-            return output
+            out = self.convblocks(output)
+            out = self.predictor(out)
+            out = np.array([[1 - o[0], o[0]] for o in out.clone().detach().cpu().numpy()])
+            return out
 
 def find_opt_threshold(target, pred):
     result = 0
     best = 0
-    
     for i in range(0, 1000):
-        pred_threshold = np.where(pred > i/1000, 1, 0)
+        pred_threshold = np.where(pred > i / 1000, 1, 0)
         now = f1_score(target, pred_threshold)
         if now > best:
-            result = i/1000
+            result = i / 1000
             best = now
-            
     return result
 
 def argument_seqset(seqset):
     arg_seqset = []
     for s, ss in seqset:
-        arg_seqset.append([s, ss]) 
-        
+        arg_seqset.append([s, ss])
         arg_seqset.append([s[::-1], ss[::-1]])
-
     return arg_seqset
 
 def augment_apis(apta, prot, ys):
@@ -333,22 +288,10 @@ def augment_apis(apta, prot, ys):
     aug_prot = []
     aug_y = []
     for a, p, y in zip(apta, prot, ys):
-        aug_apta.append(a) 
+        aug_apta.append(a)
         aug_prot.append(p)
         aug_y.append(y)
-        
-        aug_apta.append(a[::-1]) 
+        aug_apta.append(a[::-1])
         aug_prot.append(p)
         aug_y.append(y)
-        
-        # aug_apta.append(a) 
-        # aug_prot.append(p[::-1])
-        # aug_y.append(y)
-        
-        # aug_apta.append(a[::-1]) 
-        # aug_prot.append(p[::-1])
-        # aug_y.append(y)
-        
     return np.array(aug_apta), np.array(aug_prot), np.array(aug_y)
-
-
