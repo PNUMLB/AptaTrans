@@ -16,8 +16,8 @@ class FeedForward(nn.Module):
         super().__init__()
         dim_hidden = int(dim * mult)
         self.net = nn.Sequential(
-            nn.Linear(dim, dim_hidden * 2),
-            GEGLU(),
+            nn.Linear(dim, dim_hidden),
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(dim_hidden, dim)
         )
@@ -140,9 +140,9 @@ class Predictor(nn.Module):
     def __init__(self, channel_size=64):
         super(Predictor, self).__init__()
         self.predictor = nn.Sequential(
-            nn.Linear(channel_size*4, channel_size),
+            nn.Linear(channel_size*4, channel_size*2),
             nn.GELU(),
-            nn.Linear(channel_size, 1),
+            nn.Linear(channel_size*2, 1),
             nn.Sigmoid()
         )
 
@@ -220,10 +220,13 @@ class CONVBlocks(nn.Module):
         output = self.batchnorm(output)
         output = self.gelu(output)
         output = self.conv64(output)
+
         output = self.dconv128(output)
         output = self.conv128(output)
+
         output = self.dconv256(output)
         output = self.conv256(output)
+
         output = self.avgpool(output)
         output = self.flatten(output)
         return output
@@ -252,11 +255,12 @@ class AptaTransWrapper(nn.Module):
             out_prot = torch.transpose(out_prot, 1, 2)
             interaction_map = torch.bmm(out_apta, out_prot)
             interaction_map = torch.unsqueeze(interaction_map, 1)
-            interaction_map = self.batchnorm_fm(interaction_map)
+            # interaction_map = self.batchnorm_fm(interaction_map)
         return interaction_map
 
     def conv_block_proba(self, interaction_map):
         with torch.no_grad():
+            print(interaction_map.device)
             out = torch.tensor(interaction_map).float().to('cuda:0')
             output = torch.unsqueeze(out, 1)
             output = torch.mean(output, 4)

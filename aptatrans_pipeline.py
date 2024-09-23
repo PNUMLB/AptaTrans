@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from timeit import default_timer as timer
 from typing import Tuple
+import os
 
 from utils import (
     tokenize_sequences, rna2vec, seq2vec, rna2vec_pretraining,
@@ -37,16 +38,22 @@ class AptaTransPipeline:
             n_heads: int = 8,
             dropout: float = 0.1,
             channel_size: int = 64,
+            save_name: str = 'default',
             load_best_pt: bool = True,
+            load_best_model: bool = False,
             device: str = 'cpu',
             seed: int = 1004
     ):
         """Initialize AptaTransPipeline with model configurations."""
         self.seed = seed
         self.device = device
+
+        self.save_name = save_name
+        os.makedirs(f"./models/{self.save_name}", exist_ok=True)
+
         self._initialize_constants()
         self._load_protein_words()
-        self._initialize_encoders(dim, mult_ff, n_layers, n_heads, dropout, channel_size, load_best_pt)
+        self._initialize_encoders(dim, mult_ff, n_layers, n_heads, dropout, channel_size, load_best_pt, load_best_model)
 
     def _initialize_constants(self):
         """Initialize constants used in the pipeline."""
@@ -64,7 +71,7 @@ class AptaTransPipeline:
             words = words[words["freq"] > words.freq.mean()].seq.values
             self.prot_words = {word: i + 1 for i, word in enumerate(words)}
 
-    def _initialize_encoders(self, dim, mult_ff, n_layers, n_heads, dropout, channel_size=64, load_best_pt=False):
+    def _initialize_encoders(self, dim, mult_ff, n_layers, n_heads, dropout, channel_size=64, load_best_pt=False, load_best_model=False):
         """Initialize the encoder models and other components."""
         self.encoder_aptamer = Encoders(
             n_vocabs=self.n_apta_vocabs,
@@ -105,11 +112,14 @@ class AptaTransPipeline:
         if load_best_pt:
             self._load_pretrained_models()
 
+        if load_best_model:
+            self._load_best_model()
+
     def _load_pretrained_models(self):
         """Load pre-trained models for aptamer and protein encoders."""
         try:
-            self.encoder_aptamer.load_state_dict(torch.load("./models/encoder_apta_pretrained.pt"))
-            self.encoder_protein.load_state_dict(torch.load("./models/encoder_prot_pretrained.pt"))
+            self.encoder_aptamer.load_state_dict(torch.load(f"./models/{self.save_name}/pretrained_encoder_rna.pt"))
+            self.encoder_protein.load_state_dict(torch.load(f"./models/{self.save_name}/pretrained_encoder_protein.pt"))
             print('Pre-trained models loaded successfully!')
         except FileNotFoundError:
             print('No pre-trained model files found. Pre-training required!')
@@ -169,11 +179,12 @@ class AptaTransPipeline:
     def train(self, epochs: int, lr: float = 1e-5):
         """Train the model."""
         print('Training the model!')
-        best_auc = 0
+        self.best_auc = 0
+        self.best_epoch = 0
         self._initialize_optimizer_and_criterion(lr)
 
         for epoch in range(1, epochs + 1):
-            self._train_epoch(epoch, best_auc)
+            self._train_epoch(epoch)
 
     def _initialize_optimizer_and_criterion(self, lr):
         """Initialize optimizer and criterion for training."""
@@ -203,22 +214,27 @@ class AptaTransPipeline:
         self.conv.eval()
         self.predictor.eval()
 
-    def _train_epoch(self, epoch, best_auc):
+    def _train_epoch(self, epoch):
         """Train the model for a single epoch."""
         self._set_train_mode()
         loss_train, pred_train, target_train = self._batch_step(self.train_loader, train_mode=True)
-        print(f"\n[EPOCH: {epoch}], \tTrain Loss: {loss_train:.6f}", end='')
+        print(f"\n[EPOCH: {epoch}], \tTrain Loss: {loss_train:.6f}")
 
         self._set_eval_mode()
         with torch.no_grad():
             loss_test, pred_test, target_test = self._batch_step(self.test_loader, train_mode=False)
             scores = get_scores(target_test, pred_test)
-            print(f"\tTest Loss: {loss_test:.6f}\tTest ACC: {scores['acc']:.6f}\tTest AUC: {scores['roc_auc']:.6f}\t"
-                  f"Test MCC: {scores['mcc']:.6f}\tTest PR_AUC: {scores['pr_auc']:.6f}\tF1: {scores['f1']:.6f}\n")
+            print(f"\nTest Loss: {loss_test:.6f}\tTest ACC: {scores['acc']:.6f}\tTest AUC: {scores['roc_auc']:.6f}\t"
+                  f"Test MCC: {scores['mcc']:.6f}\tTest PR_AUC: {scores['pr_auc']:.6f}\tF1: {scores['f1']:.6f}")
 
-        if scores['roc_auc'] > best_auc:
-            best_auc = scores['roc_auc']
+        if scores['roc_auc'] > self.best_auc:
+            self.best_epoch = epoch
+            self.best_auc = scores['roc_auc']
+            print(f"[{self.best_epoch}], best auc: {self.best_auc}, score: {scores['roc_auc']}")
             self._save_best_model()
+        else:
+            print(f'It is not best model (best aur roc: {self.best_auc}, best epoch: {self.best_epoch})')
+            
 
     def _batch_step(self, loader: DataLoader, train_mode: bool = True) -> Tuple[float, np.ndarray, np.ndarray]:
         """Perform a single batch step."""
@@ -274,7 +290,7 @@ class AptaTransPipeline:
 
     def pretrain_encoder_aptamer(self, epochs: int, lr: float = 1e-4, weight_decay: float = 1e-5):
         """Pre-train the aptamer encoder."""
-        savepath = "./models/rna_pretrained_encoder.pt"
+        savepath = f"./models/{self.save_name}/pretrained_encoder_rna.pt"
         model_parameters = list(self.encoder_aptamer.parameters()) + list(self.token_predictor_aptamer.parameters())
         self.optimizer_pt_apta = torch.optim.AdamW(model_parameters, lr=lr, weight_decay=weight_decay)
         self.criterion_mlm_apta = nn.CrossEntropyLoss().to(self.device)
@@ -292,7 +308,7 @@ class AptaTransPipeline:
                     self.encoder_aptamer.eval()
                     self.token_predictor_aptamer.eval()
                     test_loss, test_mlm, test_ssp = self._run_epoch_pt_apta(self.rna_test, train_mode=False)
-                    print(f" Test Loss: {test_loss:.6f} Test MLM: {test_mlm:.6f} Test SSP: {test_ssp:.6f}")
+                    print(f"\nTest Loss: {test_loss:.6f} Test MLM: {test_mlm:.6f} Test SSP: {test_ssp:.6f}")
 
                     if test_loss < best_loss:
                         best_loss = test_loss
@@ -333,7 +349,7 @@ class AptaTransPipeline:
 
     def pretrain_encoder_protein(self, epochs: int, lr: float = 1e-4, weight_decay: float = 1e-5):
         """Pre-train the protein encoder."""
-        savepath = "./models/protein_pretrained_encoder.pt"
+        savepath = f"./models/{self.save_name}/pretrained_encoder_protein.pt"
         model_parameters = list(self.encoder_protein.parameters()) + list(self.token_predictor_protein.parameters())
         self.optimizer_pt_prot = torch.optim.AdamW(model_parameters, lr=lr, weight_decay=weight_decay)
         self.criterion_mlm_prot = nn.CrossEntropyLoss().to(self.device)
@@ -433,22 +449,22 @@ class AptaTransPipeline:
         """Load the best model for API."""
         try:
             print("Loading the best model for API!")
-            self.encoder_aptamer.load_state_dict(torch.load('./models/encoder_apta_best_auc.pt', map_location=self.device))
-            self.encoder_protein.load_state_dict(torch.load('./models/encoder_prot_best_auc.pt', map_location=self.device))
-            self.to_im.load_state_dict(torch.load('./models/to_im_best_auc.pt', map_location=self.device))
-            self.conv.load_state_dict(torch.load('./models/conv_best_auc.pt', map_location=self.device))
-            self.predictor.load_state_dict(torch.load('./models/predictor_best_auc.pt', map_location=self.device))
+            self.encoder_aptamer.load_state_dict(torch.load(f'./models/{self.save_name}/encoder_apta_best_auc.pt', map_location=self.device))
+            self.encoder_protein.load_state_dict(torch.load(f'./models/{self.save_name}/encoder_prot_best_auc.pt', map_location=self.device))
+            self.to_im.load_state_dict(torch.load(f'./models/{self.save_name}/to_im_best_auc.pt', map_location=self.device))
+            self.conv.load_state_dict(torch.load(f'./models/{self.save_name}/conv_best_auc.pt', map_location=self.device))
+            self.predictor.load_state_dict(torch.load(f'./models/{self.save_name}/predictor_best_auc.pt', map_location=self.device))
         except FileNotFoundError:
             print('No best model file found. Training required!')
 
     def _save_best_model(self):
         """Save the best model for API."""
         try:
-            torch.save(self.encoder_aptamer.state_dict(), "./models/encoder_apta_best_auc.pt")
-            torch.save(self.encoder_protein.state_dict(), "./models/encoder_prot_best_auc.pt")
-            torch.save(self.to_im.state_dict(), "./models/to_im_best_auc.pt")
-            torch.save(self.conv.state_dict(), "./models/conv_best_auc.pt")
-            torch.save(self.predictor.state_dict(), "./models/predictor_best_auc.pt")
+            torch.save(self.encoder_aptamer.state_dict(), f"./models/{self.save_name}/encoder_apta_best_auc.pt")
+            torch.save(self.encoder_protein.state_dict(), f"./models/{self.save_name}/encoder_prot_best_auc.pt")
+            torch.save(self.to_im.state_dict(), f"./models/{self.save_name}/to_im_best_auc.pt")
+            torch.save(self.conv.state_dict(), f"./models/{self.save_name}/conv_best_auc.pt")
+            torch.save(self.predictor.state_dict(), f"./models/{self.save_name}/predictor_best_auc.pt")
             print('Saved the best model!')
         except Exception as e:
             print(f"Error saving the best model: {e}")

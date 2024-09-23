@@ -10,7 +10,9 @@ def run(args: dict) -> None:
         dropout=args['dropout'],  # Unified dropout argument
         n_layers=args['n_layers'],
         n_heads=args['n_heads'],
+        save_name=args['save_name'],
         load_best_pt=args['load_best_pt'],
+        load_best_model=args['load_best_model'],
         device=args['device'],
         seed=args['seed'],
     )
@@ -45,15 +47,16 @@ if __name__ == '__main__':
     parser.add_argument('--mult_ff', type=int, default=2, help='Multiplication factor for feedforward layer.')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate for attention and feedforward layers.')
 
-    # Training arguments
     parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs.')
     parser.add_argument('--batch_size', type=int, default=16, help='Training batch size.')
-    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate.')
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
     
+    parser.add_argument('--save_name', type=str, default='default', help='Name of the model to save.')
     parser.add_argument('--load_best_pt', action='store_true', help='Load the best pre-trained model if available.')
+    parser.add_argument('--load_best_model', action='store_true', help='Load the best trained model if available.')
 
     parser.add_argument('--seed', type=int, default=1, help='Random seed for reproducibility.')
-    parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda', 'cuda:0'], help='Device choice: cpu or cuda.')
+    parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda', 'cuda:0', 'cuda:1'], help='Device choice: cpu or cuda.')
 
     try:
         args = parser.parse_args()
