@@ -1,0 +1,9 @@
+dim: 64               # Model dimension
+mult_ff: 2            # Expansion factor for the feed-forward network
+n_layers: 6           # Number of layers in the encoder
+n_heads: 8            # Number of heads in multi-head attention
+dropout: 0.1          # Dropout rate
+load_best_pt: False   # Whether to load pre-trained weights
+load_best_model: False # Whether to load the best-performing model
+device: 'cuda'      # Device to use (GPU)
+seed: 1004            # Random seed for reproducibility
