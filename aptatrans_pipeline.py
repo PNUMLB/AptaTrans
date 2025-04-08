@@ -54,12 +54,14 @@ class AptaTransPipeline:
             load_best_pt: bool = True,
             load_best_model: bool = False,
             device: str = 'cpu',
-            seed: int = 1004
+            seed: int = 1004,
+            data_dir: str = './data'
     ):
         """Initialize AptaTransPipeline with model configurations."""
         self.seed = seed
         seed_everything(seed)
         self.device = device
+        self.data_dir = data_dir
 
         self.save_name = save_name
         os.makedirs(f"./models/{self.save_name}", exist_ok=True)
@@ -79,7 +81,7 @@ class AptaTransPipeline:
 
     def _load_protein_words(self):
         """Load protein words from a pickle file."""
-        with open('./data/protein_word_freq_3.pickle', 'rb') as fr:
+        with open(os.path.join(self.data_dir, 'protein_word_freq_3.pickle'), 'rb') as fr:
             words = pickle.load(fr)
             words = words[words["freq"] > words.freq.mean()].seq.values
             self.prot_words = {word: i + 1 for i, word in enumerate(words)}
@@ -146,14 +148,14 @@ class AptaTransPipeline:
 
     def set_data_for_training(self, batch_size: int):
         """Set data for training."""
-        datapath = "./data/dataset_li.pickle"
+        datapath = os.path.join(self.data_dir, 'dataset_li.pickle')
         ds_train, ds_test = get_dataset(datapath, self.prot_max_len, self.n_prot_vocabs, self.prot_words)
         self.train_loader = DataLoader(API_Dataset(ds_train[0], ds_train[1], ds_train[2]), batch_size=batch_size, shuffle=True)
         self.test_loader = DataLoader(API_Dataset(ds_test[0], ds_test[1], ds_test[2]), batch_size=batch_size, shuffle=False)
 
     def set_data_rna_pt(self, batch_size: int, masked_rate: float = 0.15):
         """Set data for RNA pre-training."""
-        conn = sqlite3.connect("./data/bpRNA.db")
+        conn = sqlite3.connect(os.path.join(self.data_dir, 'bpRNA.db'))
         seqset = self._fetch_rna_sequences(conn)
         seqset = argument_seqset(seqset)
         train_seq, test_seq = train_test_split(seqset, test_size=0.05, random_state=self.seed)
@@ -175,7 +177,7 @@ class AptaTransPipeline:
 
     def set_data_protein_pt(self, batch_size: int, masked_rate: float = 0.15):
         """Set data for protein pre-training."""
-        conn = sqlite3.connect("./data/protein_ss_keywords.db")
+        conn = sqlite3.connect(os.path.join(self.data_dir, 'protein_ss_keywords.db'))
         seqset = self._fetch_protein_sequences(conn)
         train_seq, test_seq = train_test_split(seqset, test_size=0.05, random_state=self.seed)
         train_x, train_y = seq2vec(train_seq, self.prot_max_len, self.n_prot_vocabs, self.n_prot_target_vocabs, self.prot_words, self._get_protein_words_ss())
